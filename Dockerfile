@@ -1,4 +1,5 @@
-FROM node:20-alpine
+# Build stage
+FROM node:20-alpine AS builder
 
 WORKDIR /app
 
@@ -8,17 +9,26 @@ COPY package.json package-lock.json* ./
 # Install all dependencies (including devDependencies for build)
 RUN npm install
 
-# Copy tsconfig.json first
+# Copy tsconfig and source
 COPY tsconfig.json ./
-
-# Copy source files
 COPY src ./src
 
-# Build TypeScript - explicit paths
+# Build TypeScript
 RUN npm run build
 
-# Remove devDependencies to reduce image size
-RUN npm prune --production
+# Production stage
+FROM node:20-alpine
+
+WORKDIR /app
+
+# Copy package files
+COPY package.json package-lock.json* ./
+
+# Install only production dependencies
+RUN npm install --only=production
+
+# Copy built files from builder stage
+COPY --from=builder /app/dist ./dist
 
 # Expose port
 EXPOSE 3000
