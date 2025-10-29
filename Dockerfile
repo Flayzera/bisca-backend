@@ -7,17 +7,20 @@ WORKDIR /app
 RUN apk update && apk upgrade
 
 # Copy package files
-COPY package.json package-lock.json* ./
+COPY package*.json ./
 
-# Install all dependencies (including devDependencies for build)
-RUN npm install
+# Install ALL dependencies (don't skip devDependencies)
+RUN npm ci || npm install
+
+# Verify TypeScript is installed
+RUN npx tsc --version || (echo "TypeScript not found!" && exit 1)
 
 # Copy tsconfig and source
 COPY tsconfig.json ./
 COPY src ./src
 
-# Build TypeScript
-RUN npm run build
+# Build TypeScript using npx to ensure it's found
+RUN npx tsc -p tsconfig.json
 
 # Production stage
 FROM node:20-alpine

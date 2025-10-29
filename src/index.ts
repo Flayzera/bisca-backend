@@ -52,6 +52,19 @@ app.use((req, res, next) => {
   next();
 });
 
+// Health check endpoint
+app.get("/", (req, res) => {
+  res.json({ status: "ok", message: "Bisca Backend is running" });
+});
+
+app.get("/health", (req, res) => {
+  res.json({ 
+    status: "ok", 
+    timestamp: new Date().toISOString(),
+    allowedOrigins 
+  });
+});
+
 let game: GameState = createGame();
 
 // Função para limpar jogadores desconectados
