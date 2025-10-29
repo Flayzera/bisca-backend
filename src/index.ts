@@ -55,7 +55,12 @@ const io = new Server(httpServer, {
     },
     methods: ['GET', 'POST'],
     credentials: true
-  } 
+  },
+  // Permitir polling e websocket - pode ajudar com localtunnel
+  transports: ['polling', 'websocket'],
+  // Aumentar timeout para conexões através de túneis
+  pingTimeout: 60000,
+  pingInterval: 25000
 });
 
 // Middleware Express para CORS também (para requisições HTTP normais)
@@ -128,6 +133,11 @@ process.on('unhandledRejection', (reason, promise) => {
   console.error('[FATAL] Unhandled Rejection at:', promise, 'reason:', reason);
 });
 
+// Log de TODAS as conexões no nível do engine
+io.engine.on("connection", (socket) => {
+  console.log(`[ENGINE] Nova conexão no engine Socket.io`);
+});
+
 io.on("connection", (socket) => {
   try {
     console.log(`[CONNECTION] ====================`);
@@ -163,8 +173,29 @@ io.on("connection", (socket) => {
     socket.onAny((eventName, ...args) => {
       console.log(`[SOCKET EVENT] Socket ${socket.id} emitiu evento: ${eventName}`, args);
     });
+    
+    // Log de erros do socket
+    socket.on("error", (error) => {
+      console.error(`[SOCKET ERROR] Socket ${socket.id} erro:`, error);
+    });
+    
+    // Verificar se socket está realmente conectado após um pequeno delay
+    setTimeout(() => {
+      console.log(`[CONNECTION CHECK] Socket ${socket.id} ainda conectado? ${socket.connected}`);
+      console.log(`[CONNECTION CHECK] Socket ${socket.id} transport:`, socket.conn?.transport?.name || 'unknown');
+      
+      // Se o socket está conectado mas não está no jogo, e não recebeu joinGame,
+      // pode ser que o evento foi perdido - vamos verificar
+      const isInGame = game.players.some(p => p.id === socket.id);
+      if (socket.connected && !isInGame) {
+        console.log(`[CONNECTION CHECK] Socket ${socket.id} está conectado mas não está no jogo`);
+        console.log(`[CONNECTION CHECK] Pode ser que o evento joinGame não chegou ao servidor`);
+      }
+    }, 1000);
 
     // Registrar handler ANTES de qualquer coisa para garantir que captura o evento
+    // Mas também adicionar um listener global temporário para debug
+    console.log(`[HANDLER SETUP] Registrando handler joinGame para socket ${socket.id}`);
     socket.on("joinGame", (nickname: string) => {
       try {
         console.log(`[JOIN EVENT] Evento joinGame recebido para socket ${socket.id}, nickname:`, nickname);
