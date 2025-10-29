@@ -70,7 +70,10 @@ app.use((req, res, next) => {
     res.header('Access-Control-Allow-Origin', origin || '*');
     res.header('Access-Control-Allow-Credentials', 'true');
     res.header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-    res.header('Access-Control-Allow-Headers', 'Content-Type');
+    // Permitir headers usados pelo cliente e pelo LocalTunnel
+    const reqHeaders = req.headers['access-control-request-headers'] as string | undefined;
+    const defaultHeaders = 'Content-Type, bypass-tunnel-reminder, x-requested-with, authorization';
+    res.header('Access-Control-Allow-Headers', reqHeaders || defaultHeaders);
   }
   
   if (req.method === 'OPTIONS') {
