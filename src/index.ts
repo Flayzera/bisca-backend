@@ -130,8 +130,15 @@ process.on('unhandledRejection', (reason, promise) => {
 
 io.on("connection", (socket) => {
   try {
-    console.log(`[CONNECTION] Jogador conectado: ${socket.id}`);
-    console.log(`[DEBUG] Estado atual: ${game.players.length} jogadores, isGameStarted: ${game.isGameStarted}`);
+    console.log(`[CONNECTION] ====================`);
+    console.log(`[CONNECTION] Novo socket conectado: ${socket.id}`);
+    console.log(`[CONNECTION] Total de sockets conectados AGORA: ${io.sockets.sockets.size}`);
+    console.log(`[CONNECTION] Estado atual do jogo: ${game.players.length} jogadores, isGameStarted: ${game.isGameStarted}`);
+    console.log(`[CONNECTION] Lista de jogadores atual:`, game.players.map(p => `${p.nickname}(${p.id})`).join(', '));
+    
+    // Log de TODOS os sockets conectados
+    const allSocketIds = Array.from(io.sockets.sockets.keys());
+    console.log(`[CONNECTION] Todos os sockets conectados:`, allSocketIds);
     
     // Limpar jogadores desconectados ao conectar (incluindo este se já existir)
     try {
@@ -151,9 +158,22 @@ io.on("connection", (socket) => {
     } catch (error) {
       console.error(`[ERROR] Erro ao verificar reconexão:`, error);
     }
+    
+    // Log de eventos do socket para debug
+    socket.onAny((eventName, ...args) => {
+      console.log(`[SOCKET EVENT] Socket ${socket.id} emitiu evento: ${eventName}`, args);
+    });
 
     socket.on("joinGame", (nickname: string) => {
       try {
+        console.log(`[JOIN EVENT] Evento joinGame recebido para socket ${socket.id}, nickname:`, nickname);
+        console.log(`[JOIN EVENT] Tipo do nickname:`, typeof nickname);
+        console.log(`[JOIN EVENT] Estado do jogo antes de processar:`, {
+          playersCount: game.players.length,
+          players: game.players.map(p => ({ nickname: p.nickname, id: p.id })),
+          isGameStarted: game.isGameStarted
+        });
+        
         if (!nickname || typeof nickname !== 'string') {
           console.error(`[ERROR] Nickname inválido:`, nickname);
           socket.emit("error", "Nickname inválido");
@@ -170,16 +190,19 @@ io.on("connection", (socket) => {
           console.error(`[ERROR] Erro em cleanupDisconnectedPlayers:`, error);
         }
         
-        // Verificar quantos sockets estão REALMENTE conectados
+        // Obter lista de sockets realmente conectados (inclui o socket atual tentando entrar)
         const connectedSocketIds = new Set(Array.from(io.sockets.sockets.keys()));
+        
+        // Filtrar jogadores que realmente estão conectados (exclui o novo socket se não estiver na lista ainda)
         const actuallyConnectedPlayers = game.players.filter(p => connectedSocketIds.has(p.id));
         
         console.log(`[JOIN DEBUG] Jogadores na lista: ${game.players.length}`);
         console.log(`[JOIN DEBUG] Jogadores realmente conectados: ${actuallyConnectedPlayers.length}`);
-        console.log(`[JOIN DEBUG] Total de sockets conectados: ${connectedSocketIds.size}`);
-        console.log(`[JOIN DEBUG] Sockets IDs:`, Array.from(connectedSocketIds));
+        console.log(`[JOIN DEBUG] Total de sockets conectados no servidor: ${connectedSocketIds.size}`);
+        console.log(`[JOIN DEBUG] Socket tentando entrar: ${socket.id}`);
+        console.log(`[JOIN DEBUG] Sockets IDs conectados:`, Array.from(connectedSocketIds));
         
-        // Atualizar lista removendo jogadores desconectados - FORÇADO
+        // Atualizar lista removendo jogadores desconectados ANTES de qualquer verificação
         if (actuallyConnectedPlayers.length !== game.players.length) {
           console.log(`[JOIN] Limpando jogadores desconectados durante join: ${game.players.length} → ${actuallyConnectedPlayers.length}`);
           game.players = actuallyConnectedPlayers;
@@ -204,30 +227,39 @@ io.on("connection", (socket) => {
           return;
         }
         
-        // Verificar se a sala está cheia (usando jogadores realmente conectados)
-        const currentPlayerCount = game.players.length;
-        const actuallyConnectedCount = actuallyConnectedPlayers.length;
+        // Contar quantos jogadores REALMENTE conectados temos (DEPOIS da limpeza, ANTES de adicionar o novo)
+        const playersActuallyConnectedBeforeJoin = game.players.length; // Já foi filtrada acima
         
-        // Se há jogadores órfãos e menos de 4 realmente conectados, permitir entrada
-        if (currentPlayerCount >= 4 && actuallyConnectedCount < 4) {
-          console.log(`[ROOM_FULL FIX] Sala parecia cheia mas tem jogadores órfãos!`);
-          console.log(`[ROOM_FULL FIX] Limpando e permitindo entrada...`);
-          game.players = actuallyConnectedPlayers;
-          io.emit("playersUpdate", game.players);
-          // Continua para adicionar o novo jogador
-        }
-        else if (currentPlayerCount >= 4 && actuallyConnectedCount >= 4) {
+        console.log(`[ROOM_CHECK] Jogadores na lista após limpeza: ${game.players.length}`);
+        console.log(`[ROOM_CHECK] Jogadores realmente conectados (antes de adicionar novo): ${playersActuallyConnectedBeforeJoin}`);
+        console.log(`[ROOM_CHECK] Sockets conectados no servidor: ${connectedSocketIds.size}`);
+        console.log(`[ROOM_CHECK] Tentando adicionar jogador: ${nickname} (${socket.id})`);
+        
+        // Verificar se após adicionar este jogador, ainda temos espaço (max 4)
+        // Como ainda não adicionamos o novo jogador, verificamos se temos menos de 4
+        console.log(`[ROOM_CHECK FINAL] Verificando limite...`);
+        console.log(`[ROOM_CHECK FINAL] playersActuallyConnectedBeforeJoin = ${playersActuallyConnectedBeforeJoin}`);
+        console.log(`[ROOM_CHECK FINAL] game.players.length = ${game.players.length}`);
+        console.log(`[ROOM_CHECK FINAL] connectedSocketIds.size = ${connectedSocketIds.size}`);
+        
+        if (playersActuallyConnectedBeforeJoin >= 4) {
           const playersInfo = game.players.map(p => ({ 
             id: p.id, 
             nickname: p.nickname,
             connected: connectedSocketIds.has(p.id)
           }));
-          console.log(`[ROOM_FULL] Sala realmente cheia! Jogadores na lista: ${currentPlayerCount}`);
-          console.log(`[ROOM_FULL] Jogadores realmente conectados: ${actuallyConnectedCount}`);
-          console.log(`[ROOM_FULL] Detalhes:`, playersInfo);
+          console.log(`[ROOM_FULL] ==================== SALA CHEIA ====================`);
+          console.log(`[ROOM_FULL] Socket ${socket.id} (${nickname}) NÃO pode entrar!`);
+          console.log(`[ROOM_FULL] Jogadores na lista: ${playersActuallyConnectedBeforeJoin}/4`);
+          console.log(`[ROOM_FULL] Detalhes dos jogadores:`, JSON.stringify(playersInfo, null, 2));
+          console.log(`[ROOM_FULL] Todos os sockets conectados:`, Array.from(connectedSocketIds));
+          console.log(`[ROOM_FULL] ====================================================`);
           socket.emit("roomFull");
           return;
         }
+        
+        console.log(`[ROOM_CHECK FINAL] ✓ Há espaço! Permitindo entrada (${playersActuallyConnectedBeforeJoin}/4)`);
+        
         
         // Se o jogo já começou, não pode entrar
         if (game.isGameStarted) {
@@ -238,7 +270,9 @@ io.on("connection", (socket) => {
         
         // Adicionar jogador
         game.players.push({ id: socket.id, nickname: nickname.trim(), hand: [], score: 0, capturedCards: [] });
-        console.log(`Jogador ${nickname} (${socket.id}) entrou. Total: ${game.players.length}`);
+        console.log(`[JOIN SUCCESS] Jogador ${nickname} (${socket.id}) entrou com sucesso!`);
+        console.log(`[JOIN SUCCESS] Total de jogadores agora: ${game.players.length}/4`);
+        console.log(`[JOIN SUCCESS] Lista completa:`, game.players.map(p => `${p.nickname}(${p.id.substring(0, 8)}...)`).join(', '));
         
         socket.emit("gameState", game);
         io.emit("playersUpdate", game.players);
