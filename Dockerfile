@@ -3,6 +3,9 @@ FROM node:20-alpine AS builder
 
 WORKDIR /app
 
+# Update packages for security patches
+RUN apk update && apk upgrade
+
 # Copy package files
 COPY package.json package-lock.json* ./
 
@@ -20,6 +23,9 @@ RUN npm run build
 FROM node:20-alpine
 
 WORKDIR /app
+
+# Update packages for security patches
+RUN apk update && apk upgrade
 
 # Copy package files
 COPY package.json package-lock.json* ./
