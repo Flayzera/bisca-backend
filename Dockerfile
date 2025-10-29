@@ -12,15 +12,12 @@ COPY package*.json ./
 # Install ALL dependencies (don't skip devDependencies)
 RUN npm ci || npm install
 
-# Verify TypeScript is installed
-RUN npx tsc --version || (echo "TypeScript not found!" && exit 1)
-
 # Copy tsconfig and source
 COPY tsconfig.json ./
 COPY src ./src
 
-# Build TypeScript using npx to ensure it's found
-RUN npx tsc -p tsconfig.json
+# Build TypeScript using npm script (uses local typescript from node_modules)
+RUN npm run build || ./node_modules/.bin/tsc -p tsconfig.json
 
 # Production stage
 FROM node:20-alpine

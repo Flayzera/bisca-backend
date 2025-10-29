@@ -12,18 +12,34 @@ const allowedOrigins = process.env.ALLOWED_ORIGINS
   ? process.env.ALLOWED_ORIGINS.split(',').map(origin => origin.trim())
   : ['http://localhost:5173', 'http://localhost:3000'];
 
+// Adicionar automaticamente domínios do Vercel se detectar padrão
+const vercelPattern = /\.vercel\.app$/;
+const hasVercelOrigin = allowedOrigins.some(origin => vercelPattern.test(origin));
+
 console.log(`[CORS] Allowed origins:`, allowedOrigins);
+
+// Função helper para verificar se origin é permitida
+function isOriginAllowed(origin: string | undefined): boolean {
+  if (!origin) return true; // Permitir requisições sem origin
+  
+  // Verificar lista explícita
+  if (allowedOrigins.includes('*') || allowedOrigins.includes(origin)) {
+    return true;
+  }
+  
+  // Permitir qualquer domínio .vercel.app se houver pelo menos um na lista
+  if (hasVercelOrigin && vercelPattern.test(origin)) {
+    console.log(`[CORS] Permitting Vercel domain: ${origin}`);
+    return true;
+  }
+  
+  return false;
+}
 
 const io = new Server(httpServer, { 
   cors: { 
     origin: (origin, callback) => {
-      // Permitir requisições sem origin (mobile apps, Postman, etc)
-      if (!origin) {
-        return callback(null, true);
-      }
-      
-      // Verificar se o origin está na lista ou se é wildcard
-      if (allowedOrigins.includes('*') || allowedOrigins.includes(origin)) {
+      if (isOriginAllowed(origin)) {
         return callback(null, true);
       }
       
@@ -38,8 +54,8 @@ const io = new Server(httpServer, {
 
 // Middleware Express para CORS também (para requisições HTTP normais)
 app.use((req, res, next) => {
-  const origin = req.headers.origin;
-  if (!origin || allowedOrigins.includes('*') || allowedOrigins.includes(origin)) {
+  const origin = req.headers.origin as string | undefined;
+  if (isOriginAllowed(origin)) {
     res.header('Access-Control-Allow-Origin', origin || '*');
     res.header('Access-Control-Allow-Credentials', 'true');
     res.header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
