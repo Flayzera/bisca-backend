@@ -14,12 +14,14 @@ const allowedOrigins = process.env.ALLOWED_ORIGINS
 
 const vercelPattern = /\.vercel\.app$/;
 const localtunnelPattern = /\.loca\.lt$/;
+const tryCloudflarePattern = /\.trycloudflare\.com$/;
 
 function isOriginAllowed(origin: string | undefined): boolean {
   if (!origin) return true;
   if (allowedOrigins.includes('*') || allowedOrigins.includes(origin)) return true;
   if (vercelPattern.test(origin)) return true;
   if (localtunnelPattern.test(origin)) return true;
+  if (tryCloudflarePattern.test(origin)) return true;
   return false;
 }
 
