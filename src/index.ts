@@ -93,6 +93,8 @@ function cleanupDisconnectedPlayers() {
 }
 
 io.on("connection", (socket) => {
+  console.log(`[CONNECTION] Socket conectado: ${socket.id}`);
+  
   // Create room
   socket.on("createRoom", ({ capacity, nickname }: { capacity: number; nickname: string }) => {
     try {
@@ -112,11 +114,14 @@ io.on("connection", (socket) => {
       socket.join(roomId);
       socketIdToRoomId.set(socket.id, roomId);
       
+      console.log(`[CREATE_ROOM] Sala ${roomId} criada por ${nickname} (${socket.id}), capacidade: ${capacity}`);
+      
       socket.emit('roomCreated', { roomId, capacity });
       socket.emit('playersUpdate', room.game.players);
       socket.emit('gameState', room.game);
       io.to(roomId).emit('playersUpdate', room.game.players);
     } catch (e) {
+      console.error(`[ERROR] Erro ao criar sala:`, e);
       socket.emit('roomError', 'Erro ao criar sala');
     }
   });
@@ -126,11 +131,13 @@ io.on("connection", (socket) => {
     try {
       const room = rooms.get(roomId);
       if (!room) {
+        console.log(`[JOIN_ROOM] Sala ${roomId} não encontrada (${socket.id})`);
         socket.emit('roomError', 'Sala não encontrada');
         return;
       }
       
       if (room.meta.isGameStarted) {
+        console.log(`[JOIN_ROOM] Tentativa de entrar na sala ${roomId} já iniciada (${socket.id})`);
         socket.emit('roomError', 'Jogo já iniciado');
         return;
       }
@@ -141,6 +148,7 @@ io.on("connection", (socket) => {
       room.game.players = room.game.players.filter(p => connectedSocketIds.has(p.id));
       
       if (room.game.players.length >= room.meta.capacity) {
+        console.log(`[JOIN_ROOM] Sala ${roomId} cheia (${room.game.players.length}/${room.meta.capacity})`);
         socket.emit('roomFull');
         return;
       }
@@ -152,6 +160,7 @@ io.on("connection", (socket) => {
       
       // Check if already in room
       if (room.game.players.some(p => p.id === socket.id)) {
+        console.log(`[JOIN_ROOM] Socket ${socket.id} já está na sala ${roomId}`);
         socket.emit('roomJoined', { roomId, capacity: room.meta.capacity, ownerId: room.meta.ownerId });
         socket.emit('playersUpdate', room.game.players);
         socket.emit('gameState', room.game);
@@ -162,12 +171,15 @@ io.on("connection", (socket) => {
       socket.join(roomId);
       socketIdToRoomId.set(socket.id, roomId);
       
+      console.log(`[JOIN_ROOM] ${nickname} (${socket.id}) entrou na sala ${roomId}. Total: ${room.game.players.length}/${room.meta.capacity}`);
+      
       socket.emit('roomJoined', { roomId, capacity: room.meta.capacity, ownerId: room.meta.ownerId });
       socket.emit('playersUpdate', room.game.players);
       socket.emit('gameState', room.game);
       io.to(roomId).emit('playersUpdate', room.game.players);
       io.to(roomId).emit('gameState', room.game);
     } catch (e) {
+      console.error(`[ERROR] Erro ao entrar na sala:`, e);
       socket.emit('roomError', 'Erro ao entrar na sala');
     }
   });
@@ -229,19 +241,23 @@ io.on("connection", (socket) => {
       
       socket.leave(roomId);
       socketIdToRoomId.delete(socket.id);
+      const beforeCount = room.game.players.length;
       room.game.players = room.game.players.filter((p) => p.id !== socket.id);
+      
+      console.log(`[DISCONNECT] Socket ${socket.id} saiu da sala ${roomId}. Jogadores: ${beforeCount} → ${room.game.players.length}`);
       
       io.to(roomId).emit("playersUpdate", room.game.players);
       
       if (room.game.players.length === 0) {
         rooms.delete(roomId);
+        console.log(`[DISCONNECT] Sala ${roomId} vazia, removida`);
       } else if (room.meta.isGameStarted && room.game.players.length < 2) {
         room.meta.isGameStarted = false;
         room.game = createGame();
         io.to(roomId).emit("gameState", room.game);
       }
     } catch (error) {
-      // Silent fail
+      console.error(`[ERROR] Erro em disconnect:`, error);
     }
   });
 });
