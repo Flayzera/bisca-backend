@@ -93,7 +93,9 @@ function cleanupDisconnectedPlayers() {
 }
 
 io.on("connection", (socket) => {
+  const totalSockets = io.sockets.sockets.size;
   console.log(`[CONNECTION] Socket conectado: ${socket.id}`);
+  console.log(`[CONNECTION] Total de sockets conectados: ${totalSockets}`);
   
   // Create room
   socket.on("createRoom", ({ capacity, nickname }: { capacity: number; nickname: string }) => {
@@ -238,12 +240,21 @@ io.on("connection", (socket) => {
   });
 
   // Disconnect
-  socket.on("disconnect", () => {
+  socket.on("disconnect", (reason) => {
     try {
+      console.log(`[DISCONNECT] Socket ${socket.id} desconectou, motivo: ${reason}`);
+      console.log(`[DISCONNECT] Total de sockets conectados agora: ${io.sockets.sockets.size}`);
+      
       const roomId = socketIdToRoomId.get(socket.id);
-      if (!roomId) return;
+      if (!roomId) {
+        console.log(`[DISCONNECT] Socket ${socket.id} não estava em nenhuma sala`);
+        return;
+      }
       const room = rooms.get(roomId);
-      if (!room) return;
+      if (!room) {
+        console.log(`[DISCONNECT] Sala ${roomId} não encontrada`);
+        return;
+      }
       
       socket.leave(roomId);
       socketIdToRoomId.delete(socket.id);
