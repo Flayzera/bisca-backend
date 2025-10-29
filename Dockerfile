@@ -10,14 +10,17 @@ RUN apk update && apk upgrade
 COPY package*.json ./
 
 # Install ALL dependencies (don't skip devDependencies)
-RUN npm ci || npm install
+RUN npm install
+
+# Verify TypeScript is installed
+RUN ls -la node_modules/.bin/tsc || echo "TypeScript binary not found"
 
 # Copy tsconfig and source
 COPY tsconfig.json ./
 COPY src ./src
 
-# Build TypeScript using npm script (uses local typescript from node_modules)
-RUN npm run build || ./node_modules/.bin/tsc -p tsconfig.json
+# Build TypeScript - use direct path to tsc
+RUN node_modules/.bin/tsc -p tsconfig.json || npm run build || exit 1
 
 # Production stage
 FROM node:20-alpine
