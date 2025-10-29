@@ -22,10 +22,36 @@ const io = new Server(httpServer, {
 
 let game: GameState = createGame();
 
+// Função para limpar jogadores desconectados
+function cleanupDisconnectedPlayers() {
+  const connectedSocketIds = new Set(Array.from(io.sockets.sockets.keys()));
+  const validPlayers = game.players.filter(p => connectedSocketIds.has(p.id));
+  
+  if (validPlayers.length !== game.players.length) {
+    console.log(`Limpando jogadores desconectados. De ${game.players.length} para ${validPlayers.length}`);
+    game.players = validPlayers;
+    
+    // Se não há jogadores ou menos de 2, resetar o jogo
+    if (game.players.length === 0 || (game.players.length < 2 && !game.isGameStarted)) {
+      game = createGame();
+      io.emit("gameState", game);
+      io.emit("playersUpdate", []);
+    } else {
+      io.emit("playersUpdate", game.players);
+    }
+  }
+}
+
 io.on("connection", (socket) => {
   console.log(`Jogador conectado: ${socket.id}`);
+  
+  // Limpar jogadores desconectados ao conectar
+  cleanupDisconnectedPlayers();
 
   socket.on("joinGame", (nickname: string) => {
+    // Limpar jogadores desconectados antes de verificar
+    cleanupDisconnectedPlayers();
+    
     // Verificar se o socket já está no jogo (evitar duplicatas)
     const alreadyInGame = game.players.some(p => p.id === socket.id);
     
@@ -38,7 +64,7 @@ io.on("connection", (socket) => {
     
     // Verificar se a sala está cheia
     if (game.players.length >= 4) {
-      console.log(`Sala cheia. Jogadores atuais: ${game.players.length}`);
+      console.log(`Sala cheia. Jogadores atuais: ${game.players.length}`, game.players.map(p => ({ id: p.id, nickname: p.nickname })));
       socket.emit("roomFull");
       return;
     }
@@ -87,17 +113,36 @@ io.on("connection", (socket) => {
     
     io.emit("playersUpdate", game.players);
     
+    // Se não há mais jogadores ou o jogo estava em andamento, reseta
+    if (game.players.length === 0) {
+      console.log(`Nenhum jogador restante. Resetando jogo...`);
+      game = createGame();
+      io.emit("gameState", game);
+    }
     // Se o jogo estava em andamento e alguém saiu, reseta o jogo
-    if (game.isGameStarted) {
+    else if (game.isGameStarted) {
       console.log(`Jogo estava em andamento. Resetando...`);
       game = createGame();
       io.emit("gameState", game);
     }
-    // Se restaram menos de 2 jogadores, reseta o jogo
+    // Se restaram menos de 2 jogadores e o jogo não estava iniciado, reseta
     else if (game.players.length < 2) {
       console.log(`Menos de 2 jogadores. Resetando...`);
       game = createGame();
       io.emit("gameState", game);
+    }
+  });
+});
+
+// Endpoint de debug para verificar estado do jogo
+app.get("/debug", (req, res) => {
+  const connectedSocketIds = new Set(Array.from(io.sockets.sockets.keys()));
+  res.json({
+    gameState: {
+      playersCount: game.players.length,
+      players: game.players.map(p => ({ id: p.id, nickname: p.nickname, connected: connectedSocketIds.has(p.id) })),
+      isGameStarted: game.isGameStarted,
+      connectedSockets: connectedSocketIds.size
     }
   });
 });
