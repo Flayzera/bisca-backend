@@ -214,6 +214,7 @@ io.on("connection", (socket) => {
         socket.emit('playersUpdate', room.game.players);
         socket.emit('gameState', room.game);
         io.to(roomId).emit('playersUpdate', room.game.players);
+        io.to(roomId).emit('gameState', room.game);
       } catch (e) {
         socket.emit('roomError', 'Erro ao criar sala');
       }
@@ -237,6 +238,7 @@ io.on("connection", (socket) => {
         socket.emit('playersUpdate', room.game.players);
         socket.emit('gameState', room.game);
         io.to(roomId).emit('playersUpdate', room.game.players);
+        io.to(roomId).emit('gameState', room.game);
       } catch (e) {
         socket.emit('roomError', 'Erro ao entrar na sala');
       }
