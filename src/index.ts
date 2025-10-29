@@ -43,6 +43,7 @@ function isOriginAllowed(origin: string | undefined): boolean {
 }
 
 const io = new Server(httpServer, { 
+  path: '/bisca-socket',
   cors: { 
     origin: (origin, callback) => {
       if (isOriginAllowed(origin)) {
