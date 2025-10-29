@@ -8,10 +8,13 @@ COPY package.json package-lock.json* ./
 # Install all dependencies (including devDependencies for build)
 RUN npm install
 
-# Copy source files
-COPY . .
+# Copy tsconfig.json first
+COPY tsconfig.json ./
 
-# Build TypeScript
+# Copy source files
+COPY src ./src
+
+# Build TypeScript - explicit paths
 RUN npm run build
 
 # Remove devDependencies to reduce image size
