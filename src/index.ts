@@ -12,9 +12,9 @@ const allowedOrigins = process.env.ALLOWED_ORIGINS
   ? process.env.ALLOWED_ORIGINS.split(',').map(origin => origin.trim())
   : ['http://localhost:5173', 'http://localhost:3000'];
 
-// Adicionar automaticamente domínios do Vercel se detectar padrão
+// Padrões para permitir automaticamente
 const vercelPattern = /\.vercel\.app$/;
-const hasVercelOrigin = allowedOrigins.some(origin => vercelPattern.test(origin));
+const localtunnelPattern = /\.loca\.lt$/;
 
 console.log(`[CORS] Allowed origins:`, allowedOrigins);
 
@@ -27,9 +27,15 @@ function isOriginAllowed(origin: string | undefined): boolean {
     return true;
   }
   
-  // Permitir qualquer domínio .vercel.app se houver pelo menos um na lista
-  if (hasVercelOrigin && vercelPattern.test(origin)) {
+  // Permitir qualquer domínio .vercel.app (automaticamente)
+  if (vercelPattern.test(origin)) {
     console.log(`[CORS] Permitting Vercel domain: ${origin}`);
+    return true;
+  }
+  
+  // Permitir domínios localtunnel (se estiver usando)
+  if (localtunnelPattern.test(origin)) {
+    console.log(`[CORS] Permitting localtunnel domain: ${origin}`);
     return true;
   }
   
@@ -157,30 +163,68 @@ io.on("connection", (socket) => {
         console.log(`[JOIN] Tentativa de entrada: ${nickname} (${socket.id})`);
         console.log(`[DEBUG] Estado antes: ${game.players.length} jogadores`);
         
-        // Limpar jogadores desconectados antes de verificar
+        // Limpar jogadores desconectados ANTES de qualquer verificação
         try {
           cleanupDisconnectedPlayers();
         } catch (error) {
           console.error(`[ERROR] Erro em cleanupDisconnectedPlayers:`, error);
         }
         
+        // Verificar quantos sockets estão REALMENTE conectados
+        const connectedSocketIds = new Set(Array.from(io.sockets.sockets.keys()));
+        const actuallyConnectedPlayers = game.players.filter(p => connectedSocketIds.has(p.id));
+        
+        console.log(`[JOIN DEBUG] Jogadores na lista: ${game.players.length}`);
+        console.log(`[JOIN DEBUG] Jogadores realmente conectados: ${actuallyConnectedPlayers.length}`);
+        console.log(`[JOIN DEBUG] Total de sockets conectados: ${connectedSocketIds.size}`);
+        console.log(`[JOIN DEBUG] Sockets IDs:`, Array.from(connectedSocketIds));
+        
+        // Atualizar lista removendo jogadores desconectados - FORÇADO
+        if (actuallyConnectedPlayers.length !== game.players.length) {
+          console.log(`[JOIN] Limpando jogadores desconectados durante join: ${game.players.length} → ${actuallyConnectedPlayers.length}`);
+          game.players = actuallyConnectedPlayers;
+          
+          // Se havia jogadores órfãos e agora está vazio, resetar
+          if (game.players.length === 0 && !game.isGameStarted) {
+            console.log(`[JOIN] Lista estava com jogadores órfãos, resetando jogo`);
+            game = createGame();
+          }
+          
+          io.emit("playersUpdate", game.players);
+          io.emit("gameState", game);
+        }
+        
         // Verificar se o socket já está no jogo (evitar duplicatas)
         const alreadyInGame = game.players.some(p => p.id === socket.id);
         
         if (alreadyInGame) {
-          console.log(`Jogador ${socket.id} já está no jogo`);
+          console.log(`[JOIN] Jogador ${socket.id} já está no jogo`);
           socket.emit("gameState", game);
           socket.emit("playersUpdate", game.players);
           return;
         }
         
-        // Verificar se a sala está cheia
-        if (game.players.length >= 4) {
-          const playersInfo = game.players.map(p => ({ id: p.id, nickname: p.nickname }));
-          const connectedSockets = Array.from(io.sockets.sockets.keys());
-          console.log(`[ROOM_FULL] Sala cheia! Jogadores na lista: ${game.players.length}`);
+        // Verificar se a sala está cheia (usando jogadores realmente conectados)
+        const currentPlayerCount = game.players.length;
+        const actuallyConnectedCount = actuallyConnectedPlayers.length;
+        
+        // Se há jogadores órfãos e menos de 4 realmente conectados, permitir entrada
+        if (currentPlayerCount >= 4 && actuallyConnectedCount < 4) {
+          console.log(`[ROOM_FULL FIX] Sala parecia cheia mas tem jogadores órfãos!`);
+          console.log(`[ROOM_FULL FIX] Limpando e permitindo entrada...`);
+          game.players = actuallyConnectedPlayers;
+          io.emit("playersUpdate", game.players);
+          // Continua para adicionar o novo jogador
+        }
+        else if (currentPlayerCount >= 4 && actuallyConnectedCount >= 4) {
+          const playersInfo = game.players.map(p => ({ 
+            id: p.id, 
+            nickname: p.nickname,
+            connected: connectedSocketIds.has(p.id)
+          }));
+          console.log(`[ROOM_FULL] Sala realmente cheia! Jogadores na lista: ${currentPlayerCount}`);
+          console.log(`[ROOM_FULL] Jogadores realmente conectados: ${actuallyConnectedCount}`);
           console.log(`[ROOM_FULL] Detalhes:`, playersInfo);
-          console.log(`[ROOM_FULL] Sockets realmente conectados: ${connectedSockets.length}`, connectedSockets);
           socket.emit("roomFull");
           return;
         }
@@ -289,16 +333,54 @@ io.on("connection", (socket) => {
   }
 });
 
+// Limpeza automática periódica de jogadores desconectados (a cada 30 segundos)
+setInterval(() => {
+  try {
+    const beforeCount = game.players.length;
+    cleanupDisconnectedPlayers();
+    if (beforeCount !== game.players.length) {
+      console.log(`[AUTO-CLEANUP] Limpeza automática executada`);
+    }
+  } catch (error) {
+    console.error(`[AUTO-CLEANUP] Erro:`, error);
+  }
+}, 30000); // 30 segundos
+
 // Endpoint de debug para verificar estado do jogo
 app.get("/debug", (req, res) => {
   const connectedSocketIds = new Set(Array.from(io.sockets.sockets.keys()));
+  const actuallyConnected = game.players.filter(p => connectedSocketIds.has(p.id));
+  
   res.json({
     gameState: {
-      playersCount: game.players.length,
-      players: game.players.map(p => ({ id: p.id, nickname: p.nickname, connected: connectedSocketIds.has(p.id) })),
-      isGameStarted: game.isGameStarted,
-      connectedSockets: connectedSocketIds.size
-    }
+      playersInList: game.players.length,
+      playersActuallyConnected: actuallyConnected.length,
+      totalSocketsConnected: connectedSocketIds.size,
+      players: game.players.map(p => ({ 
+        id: p.id, 
+        nickname: p.nickname, 
+        connected: connectedSocketIds.has(p.id) 
+      })),
+      connectedSocketIds: Array.from(connectedSocketIds),
+      isGameStarted: game.isGameStarted
+    },
+    needsCleanup: game.players.length !== actuallyConnected.length,
+    timestamp: new Date().toISOString()
+  });
+});
+
+// Endpoint para forçar limpeza manual
+app.get("/cleanup", (req, res) => {
+  const beforeCount = game.players.length;
+  cleanupDisconnectedPlayers();
+  const afterCount = game.players.length;
+  
+  res.json({
+    success: true,
+    removed: beforeCount - afterCount,
+    playersBefore: beforeCount,
+    playersAfter: afterCount,
+    timestamp: new Date().toISOString()
   });
 });
 
