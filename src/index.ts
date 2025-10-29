@@ -9,15 +9,47 @@ const httpServer = createServer(app);
 
 // CORS configuration - allow frontend URLs
 const allowedOrigins = process.env.ALLOWED_ORIGINS 
-  ? process.env.ALLOWED_ORIGINS.split(',')
+  ? process.env.ALLOWED_ORIGINS.split(',').map(origin => origin.trim())
   : ['http://localhost:5173', 'http://localhost:3000'];
+
+console.log(`[CORS] Allowed origins:`, allowedOrigins);
 
 const io = new Server(httpServer, { 
   cors: { 
-    origin: allowedOrigins,
+    origin: (origin, callback) => {
+      // Permitir requisições sem origin (mobile apps, Postman, etc)
+      if (!origin) {
+        return callback(null, true);
+      }
+      
+      // Verificar se o origin está na lista ou se é wildcard
+      if (allowedOrigins.includes('*') || allowedOrigins.includes(origin)) {
+        return callback(null, true);
+      }
+      
+      console.log(`[CORS] Origin bloqueado: ${origin}`);
+      console.log(`[CORS] Origins permitidos:`, allowedOrigins);
+      return callback(new Error('Not allowed by CORS'));
+    },
     methods: ['GET', 'POST'],
     credentials: true
   } 
+});
+
+// Middleware Express para CORS também (para requisições HTTP normais)
+app.use((req, res, next) => {
+  const origin = req.headers.origin;
+  if (!origin || allowedOrigins.includes('*') || allowedOrigins.includes(origin)) {
+    res.header('Access-Control-Allow-Origin', origin || '*');
+    res.header('Access-Control-Allow-Credentials', 'true');
+    res.header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+    res.header('Access-Control-Allow-Headers', 'Content-Type');
+  }
+  
+  if (req.method === 'OPTIONS') {
+    return res.sendStatus(200);
+  }
+  next();
 });
 
 let game: GameState = createGame();
@@ -25,10 +57,13 @@ let game: GameState = createGame();
 // Função para limpar jogadores desconectados
 function cleanupDisconnectedPlayers() {
   const connectedSocketIds = new Set(Array.from(io.sockets.sockets.keys()));
+  const beforeCount = game.players.length;
   const validPlayers = game.players.filter(p => connectedSocketIds.has(p.id));
   
   if (validPlayers.length !== game.players.length) {
-    console.log(`Limpando jogadores desconectados. De ${game.players.length} para ${validPlayers.length}`);
+    console.log(`[CLEANUP] Limpando jogadores desconectados: ${beforeCount} → ${validPlayers.length}`);
+    console.log(`[CLEANUP] Sockets conectados: ${Array.from(connectedSocketIds).join(', ')}`);
+    console.log(`[CLEANUP] Jogadores na lista: ${game.players.map(p => `${p.nickname}(${p.id})`).join(', ')}`);
     game.players = validPlayers;
     
     // Se não há jogadores ou menos de 2, resetar o jogo
@@ -43,12 +78,23 @@ function cleanupDisconnectedPlayers() {
 }
 
 io.on("connection", (socket) => {
-  console.log(`Jogador conectado: ${socket.id}`);
+  console.log(`[CONNECTION] Jogador conectado: ${socket.id}`);
+  console.log(`[DEBUG] Estado atual: ${game.players.length} jogadores, isGameStarted: ${game.isGameStarted}`);
   
-  // Limpar jogadores desconectados ao conectar
+  // Limpar jogadores desconectados ao conectar (incluindo este se já existir)
   cleanupDisconnectedPlayers();
+  
+  // IMPORTANTE: Remover este socket da lista se já existir (reconexão)
+  const existingPlayerIndex = game.players.findIndex(p => p.id === socket.id);
+  if (existingPlayerIndex !== -1) {
+    console.log(`[RECONNECTION] Removendo jogador duplicado ${socket.id} antes de reconectar`);
+    game.players.splice(existingPlayerIndex, 1);
+    io.emit("playersUpdate", game.players);
+  }
 
   socket.on("joinGame", (nickname: string) => {
+    console.log(`[JOIN] Tentativa de entrada: ${nickname} (${socket.id})`);
+    console.log(`[DEBUG] Estado antes: ${game.players.length} jogadores`);
     // Limpar jogadores desconectados antes de verificar
     cleanupDisconnectedPlayers();
     
@@ -64,7 +110,11 @@ io.on("connection", (socket) => {
     
     // Verificar se a sala está cheia
     if (game.players.length >= 4) {
-      console.log(`Sala cheia. Jogadores atuais: ${game.players.length}`, game.players.map(p => ({ id: p.id, nickname: p.nickname })));
+      const playersInfo = game.players.map(p => ({ id: p.id, nickname: p.nickname }));
+      const connectedSockets = Array.from(io.sockets.sockets.keys());
+      console.log(`[ROOM_FULL] Sala cheia! Jogadores na lista: ${game.players.length}`);
+      console.log(`[ROOM_FULL] Detalhes:`, playersInfo);
+      console.log(`[ROOM_FULL] Sockets realmente conectados: ${connectedSockets.length}`, connectedSockets);
       socket.emit("roomFull");
       return;
     }
@@ -103,13 +153,14 @@ io.on("connection", (socket) => {
     }
   });
 
-  socket.on("disconnect", () => {
-    console.log(`Jogador saiu: ${socket.id}`);
+  socket.on("disconnect", (reason) => {
+    console.log(`[DISCONNECT] Jogador saiu: ${socket.id}, motivo: ${reason}`);
     const playerLeft = game.players.find(p => p.id === socket.id);
     
     // Remover jogador
+    const beforeCount = game.players.length;
     game.players = game.players.filter((p) => p.id !== socket.id);
-    console.log(`Jogadores restantes: ${game.players.length}`);
+    console.log(`[DISCONNECT] Jogadores: ${beforeCount} → ${game.players.length}`);
     
     io.emit("playersUpdate", game.players);
     
