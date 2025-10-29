@@ -159,11 +159,12 @@ io.on("connection", (socket) => {
       console.error(`[ERROR] Erro ao verificar reconexão:`, error);
     }
     
-    // Log de eventos do socket para debug
+    // Log de eventos do socket para debug - ANTES de registrar handlers
     socket.onAny((eventName, ...args) => {
       console.log(`[SOCKET EVENT] Socket ${socket.id} emitiu evento: ${eventName}`, args);
     });
 
+    // Registrar handler ANTES de qualquer coisa para garantir que captura o evento
     socket.on("joinGame", (nickname: string) => {
       try {
         console.log(`[JOIN EVENT] Evento joinGame recebido para socket ${socket.id}, nickname:`, nickname);
