@@ -210,8 +210,10 @@ io.on("connection", (socket) => {
         socket.join(roomId);
         socketIdToRoomId.set(socket.id, roomId);
         socket.emit('roomCreated', { roomId, capacity });
-        io.to(roomId).emit('playersUpdate', room.game.players);
+        // Emit directly to creator (in case room join sync is late) and to the room
+        socket.emit('playersUpdate', room.game.players);
         socket.emit('gameState', room.game);
+        io.to(roomId).emit('playersUpdate', room.game.players);
       } catch (e) {
         socket.emit('roomError', 'Erro ao criar sala');
       }
@@ -231,8 +233,10 @@ io.on("connection", (socket) => {
         socket.join(roomId);
         socketIdToRoomId.set(socket.id, roomId);
         socket.emit('roomJoined', { roomId, capacity: room.meta.capacity, ownerId: room.meta.ownerId });
-        io.to(roomId).emit('playersUpdate', room.game.players);
+        // Emit to the newly joined user and broadcast to all in room
+        socket.emit('playersUpdate', room.game.players);
         socket.emit('gameState', room.game);
+        io.to(roomId).emit('playersUpdate', room.game.players);
       } catch (e) {
         socket.emit('roomError', 'Erro ao entrar na sala');
       }
@@ -333,8 +337,8 @@ io.on("connection", (socket) => {
         if (room.meta.isGameStarted) {
           console.log(`Jogo já iniciado, não é possível entrar agora`);
           socket.emit("gameStarted");
-          return;
-        }
+      return;
+    }
     
     // Adicionar jogador
         game.players.push({ id: socket.id, nickname: nickname.trim(), hand: [], score: 0, capturedCards: [] });
