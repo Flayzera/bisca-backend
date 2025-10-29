@@ -173,11 +173,17 @@ io.on("connection", (socket) => {
       
       console.log(`[JOIN_ROOM] ${nickname} (${socket.id}) entrou na sala ${roomId}. Total: ${room.game.players.length}/${room.meta.capacity}`);
       
+      // Enviar primeiro para o novo jogador
       socket.emit('roomJoined', { roomId, capacity: room.meta.capacity, ownerId: room.meta.ownerId });
       socket.emit('playersUpdate', room.game.players);
       socket.emit('gameState', room.game);
-      io.to(roomId).emit('playersUpdate', room.game.players);
-      io.to(roomId).emit('gameState', room.game);
+      
+      // Depois enviar para todos na sala (incluindo o novo jogador, mas garantindo que todos recebam)
+      setTimeout(() => {
+        io.to(roomId).emit('playersUpdate', room.game.players);
+        io.to(roomId).emit('gameState', room.game);
+        console.log(`[JOIN_ROOM] Eventos broadcast enviados para sala ${roomId}`);
+      }, 100);
     } catch (e) {
       console.error(`[ERROR] Erro ao entrar na sala:`, e);
       socket.emit('roomError', 'Erro ao entrar na sala');
