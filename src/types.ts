@@ -21,3 +21,15 @@ export interface GameState {
   roundNumber: number;
   isGameStarted: boolean;
 }
+
+export interface RoomMeta {
+  id: string;
+  capacity: number; // 2 to 4
+  ownerId: string; // socket id
+  isGameStarted: boolean;
+}
+
+export interface Room {
+  meta: RoomMeta;
+  game: GameState;
+}
