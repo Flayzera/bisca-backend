@@ -24,6 +24,9 @@ export interface GameState {
   // Histórico mínimo para regras de fichas na última vaza
   lastTrickWinnerId?: string;
   lastTrickCards?: TablePlay[];
+  // Sinalizadores para regras de fichas
+  playedTrumpAByPlayerId?: Record<string, boolean>;
+  capturedOppTrump7ByPlayerId?: Record<string, boolean>;
 }
 
 export interface RoomMeta {

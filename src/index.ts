@@ -105,9 +105,9 @@ io.on("connection", (socket) => {
       capacity = Math.max(2, Math.min(4, Math.floor(capacity || 2)));
       if (!nickname || typeof nickname !== 'string') {
         socket.emit('roomError', 'Nickname inválido');
-        return;
-      }
-      
+      return;
+    }
+    
       const roomId = generateRoomId();
       const rounds = Math.max(1, Math.min(20, Math.floor(totalRounds || 1)));
       const meta: RoomMeta = { id: roomId, capacity, ownerId: socket.id, isGameStarted: false, totalRounds: rounds, currentRound: 1 };
@@ -249,8 +249,8 @@ io.on("connection", (socket) => {
 
       // Verificar fim da rodada (todos sem cartas)
       const playersWithCards = room.game.players.filter(p => p.hand.length > 0);
-      if (playersWithCards.length === 0) {
-        // Calcular fichas desta rodada
+    if (playersWithCards.length === 0) {
+        // Calcular fichas desta partida (jogo)
         const trumpSuit = room.game.trumpCard.slice(-1);
         const trump2 = '2' + trumpSuit;
         const trump7 = '7' + trumpSuit;
@@ -264,17 +264,23 @@ io.on("connection", (socket) => {
         const opponentsPlayedAor7Trump = lastTrick.some(t => t.card === trumpA || t.card === trump7);
 
         // Determinar maior pontuação
-        const maxScore = Math.max(...room.game.players.map(p => p.score));
+        const scores = room.game.players.map(p => p.score);
+        const maxScore = Math.max(...scores);
+        const numMax = scores.filter(s => s === maxScore).length;
 
-        const chipsAwarded: { playerId: string; delta: number }[] = [];
+        const chipsAwarded: { playerId: string; delta: number; reasons: string[] }[] = [];
         room.game.players.forEach(p => {
           let delta = 0;
+          const reasons: string[] = [];
           const captured = new Set(p.capturedCards);
-          if (captured.has(trump2)) delta += 1; // tirou o 2 do trunfo
-          if (captured.has(trumpA) && captured.has(trump7)) delta += 1; // A e 7 do trunfo (conjuntos)
-          if (p.score === maxScore && maxScore > 0) delta += 1; // maior pontuação
-          if (p.id === lastTrickWinnerId && lastTrickWinnerPlayedKTrump && !opponentsPlayedAor7Trump) delta += 1; // rei no final
-          if (delta > 0) chipsAwarded.push({ playerId: p.id, delta });
+          if (captured.has(trump2)) { delta += 1; reasons.push('captured_trump_2'); }
+          if (captured.has(trumpA) && captured.has(trump7)) { delta += 1; reasons.push('captured_both_trump_A_7'); }
+          const playedTrumpA = !!room.game.playedTrumpAByPlayerId?.[p.id];
+          const capturedOpp7 = !!room.game.capturedOppTrump7ByPlayerId?.[p.id];
+          if (playedTrumpA && capturedOpp7) { delta += 1; reasons.push('played_trump_A_and_captured_opponent_trump_7'); }
+          if (numMax === 1 && p.score === maxScore && maxScore > 0) { delta += 1; reasons.push('highest_score'); }
+          if (p.id === lastTrickWinnerId && lastTrickWinnerPlayedKTrump && !opponentsPlayedAor7Trump) { delta += 1; reasons.push('king_of_trump_last_trick'); }
+          if (delta > 0) chipsAwarded.push({ playerId: p.id, delta, reasons });
         });
 
         // Aplicar fichas

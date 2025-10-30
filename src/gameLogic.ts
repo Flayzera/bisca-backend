@@ -41,6 +41,8 @@ export function createGame(): GameState {
     isGameStarted: false,
     lastTrickWinnerId: undefined,
     lastTrickCards: undefined,
+    playedTrumpAByPlayerId: {},
+    capturedOppTrump7ByPlayerId: {},
   };
 }
 
@@ -230,6 +232,14 @@ export function playCard(game: GameState, playerId: string, card: string): GameS
     nickname: player.nickname,
     card 
   }];
+
+  // Sinaliza se o jogador jogou o Ás de trunfo
+  const trumpSuit = getTrumpSuit(game.trumpCard);
+  const trumpA = 'A' + trumpSuit;
+  const playedTrumpAByPlayerId = { ...(game.playedTrumpAByPlayerId || {}) };
+  if (card === trumpA) {
+    playedTrumpAByPlayerId[playerId] = true;
+  }
   
   let newTurn = game.turn;
   let newRoundNumber = game.roundNumber;
@@ -273,6 +283,14 @@ export function playCard(game: GameState, playerId: string, card: string): GameS
         }
         return p;
       });
+
+      // Se o 7 de trunfo foi jogado por um adversário nesta vaza e o vencedor capturou, marcar flag
+      const trump7 = '7' + trumpSuit;
+      const sevenPlay = newTable.find(t => t.card === trump7);
+      const capturedOppTrump7ByPlayerId = { ...(game.capturedOppTrump7ByPlayerId || {}) };
+      if (sevenPlay && sevenPlay.playerId !== winner.id) {
+        capturedOppTrump7ByPlayerId[winner.id] = true;
+      }
       
       newTurn = absoluteWinnerPlayerIndex;
       newRoundNumber++;
@@ -285,6 +303,8 @@ export function playCard(game: GameState, playerId: string, card: string): GameS
         roundNumber: newRoundNumber,
         lastTrickWinnerId: winner.id,
         lastTrickCards: newTable,
+        playedTrumpAByPlayerId,
+        capturedOppTrump7ByPlayerId,
       };
     }
   } else {
@@ -297,6 +317,7 @@ export function playCard(game: GameState, playerId: string, card: string): GameS
     table: newTable,
     turn: newTurn,
     roundNumber: newRoundNumber,
+    playedTrumpAByPlayerId,
   };
 }
 
