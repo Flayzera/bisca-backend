@@ -50,8 +50,8 @@ export function startGame(game: GameState): GameState {
   if (game.players.length < 2 || game.players.length > 4) return game;
   
   const shuffled = shuffleDeck(createDeck());
-  const trumpCard = shuffled[0];
-  const deck = shuffled.slice(1); // remove trump from the dealing deck
+  // Não remover carta de trunfo do baralho; vamos escolher o trunfo de dentro das mãos
+  const deck = [...shuffled];
   
   const numPlayers = game.players.length;
   const cardsPerPlayer = 10;
@@ -69,11 +69,25 @@ export function startGame(game: GameState): GameState {
   });
   
   const remainingDeck = deck.slice(totalToDeal);
+  // Escolher carta de trunfo a partir das mãos já distribuídas, garantindo que alguém a possua
+  // Escolha simples: pegar uma carta aleatória da mão do primeiro jogador que tenha pelo menos 1 carta
+  let chosenTrumpCard = '';
+  const candidates: string[] = [];
+  for (const p of newPlayers) {
+    candidates.push(...p.hand);
+  }
+  if (candidates.length > 0) {
+    const idx = Math.floor(Math.random() * candidates.length);
+    chosenTrumpCard = candidates[idx];
+  } else {
+    // fallback improvável
+    chosenTrumpCard = shuffled[0];
+  }
   
   return {
     ...game,
     players: newPlayers,
-    trumpCard,
+    trumpCard: chosenTrumpCard,
     deck: remainingDeck,
     turn: 0,
     roundNumber: 1,
@@ -208,6 +222,17 @@ export function playCard(game: GameState, playerId: string, card: string): GameS
   
   if (!player.hand.includes(card)) return game;
   
+  // Regra: no PRIMEIRO lance da partida (primeira vaza, primeira carta), o jogador inicial deve jogar trunfo
+  if (game.roundNumber === 1 && game.table.length === 0) {
+    const trumpSuit = getTrumpSuit(game.trumpCard);
+    const hasTrump = player.hand.some(c => getCardSuit(c) === trumpSuit);
+    const playedSuit = getCardSuit(card);
+    if (hasTrump && playedSuit !== trumpSuit) {
+      console.log(`Jogada inválida: primeira carta da partida deve ser do trunfo (${trumpSuit})`);
+      return game;
+    }
+  }
+
   // Validar se o jogador deve seguir o naipe da rodada (deve seguir se tiver; se não tiver, pode jogar qualquer carta)
   if (game.table.length > 0) {
     const firstCardSuit = getCardSuit(game.table[0].card);
