@@ -71,6 +71,7 @@ app.get("/health", (req, res) => {
 // Multi-room state
 const rooms = new Map<string, Room>();
 const socketIdToRoomId = new Map<string, string>();
+const roomLogs = new Map<string, { ts: number; text: string; type?: string }[]>();
 
 function generateRoomId(): string {
   return Math.random().toString(36).slice(2, 8);
@@ -92,6 +93,16 @@ function cleanupDisconnectedPlayers() {
       io.to(roomId).emit("playersUpdate", room.game.players);
     }
   }
+}
+
+function addRoomLog(roomId: string, text: string, type: string = 'system') {
+  const list = roomLogs.get(roomId) || [];
+  const entry = { ts: Date.now(), text, type };
+  list.push(entry);
+  // keep last 200
+  if (list.length > 200) list.shift();
+  roomLogs.set(roomId, list);
+  io.to(roomId).emit('roomLog', entry);
 }
 
 io.on("connection", (socket) => {
@@ -118,8 +129,10 @@ io.on("connection", (socket) => {
       rooms.set(roomId, room);
       socket.join(roomId);
       socketIdToRoomId.set(socket.id, roomId);
+      roomLogs.set(roomId, []);
       
       console.log(`[CREATE_ROOM] Sala ${roomId} criada por ${nickname} (${socket.id}), capacidade: ${capacity}, rodadas: ${rounds}`);
+      addRoomLog(roomId, `Sala criada por ${nickname}. Capacidade: ${capacity}. Rodadas: ${rounds}`);
       
       socket.emit('roomCreated', { roomId, capacity, totalRounds: rounds });
       socket.emit('playersUpdate', room.game.players);
@@ -177,6 +190,7 @@ io.on("connection", (socket) => {
       socketIdToRoomId.set(socket.id, roomId);
       
       console.log(`[JOIN_ROOM] ${nickname} (${socket.id}) entrou na sala ${roomId}. Total: ${room.game.players.length}/${room.meta.capacity}`);
+      addRoomLog(roomId, `${nickname} entrou na sala.`);
       
       // Enviar primeiro para o novo jogador
       socket.emit('roomJoined', { roomId, capacity: room.meta.capacity, ownerId: room.meta.ownerId });
@@ -216,6 +230,33 @@ io.on("connection", (socket) => {
       room.meta.isGameStarted = true;
       io.to(roomId).emit('gameState', room.game);
       io.to(roomId).emit('gameStarted');
+      // Logs e fichas iniciais (não revelar K do trunfo)
+      const trumpSuit = room.game.trumpCard.slice(-1);
+      addRoomLog(roomId, `Jogo iniciado. Trunfo: ${room.game.trumpCard}`);
+      const initialAwards: { playerId: string; delta: number; reasons: string[] }[] = [];
+      room.game.players = room.game.players.map(p => {
+        let delta = 0;
+        const reasons: string[] = [];
+        const hasTrump2 = p.hand.includes('2' + trumpSuit);
+        const hasTrumpA = p.hand.includes('A' + trumpSuit);
+        const hasTrump7 = p.hand.includes('7' + trumpSuit);
+        if (hasTrump2) {
+          addRoomLog(roomId, `${p.nickname} tem o 2 do trunfo.`);
+          delta += 1; reasons.push('captured_trump_2_initial');
+        }
+        if (hasTrumpA && hasTrump7) {
+          addRoomLog(roomId, `${p.nickname} tem o A e o 7 do trunfo.`);
+          delta += 1; reasons.push('captured_both_trump_A_7_initial');
+        }
+        if (delta > 0) {
+          initialAwards.push({ playerId: p.id, delta, reasons });
+        }
+        return { ...p, chips: (p.chips ?? 0) + delta };
+      });
+      if (initialAwards.length > 0) {
+        io.to(roomId).emit('chipsAwarded', { awards: initialAwards });
+        io.to(roomId).emit('gameState', room.game);
+      }
     } catch (e) {
       socket.emit('roomError', 'Erro ao iniciar jogo');
     }
@@ -247,10 +288,10 @@ io.on("connection", (socket) => {
         });
       }
 
-      // Verificar fim da rodada (todos sem cartas)
+      // Verificar fim da partida (todos sem cartas)
       const playersWithCards = room.game.players.filter(p => p.hand.length > 0);
     if (playersWithCards.length === 0) {
-        // Calcular fichas desta partida (jogo)
+        // Calcular fichas desta partida (jogo) — finais: rei no final, maior pontuação, A do trunfo + pegar 7 adversário
         const trumpSuit = room.game.trumpCard.slice(-1);
         const trump2 = '2' + trumpSuit;
         const trump7 = '7' + trumpSuit;
@@ -273,8 +314,7 @@ io.on("connection", (socket) => {
           let delta = 0;
           const reasons: string[] = [];
           const captured = new Set(p.capturedCards);
-          if (captured.has(trump2)) { delta += 1; reasons.push('captured_trump_2'); }
-          if (captured.has(trumpA) && captured.has(trump7)) { delta += 1; reasons.push('captured_both_trump_A_7'); }
+          // iniciais já foram contabilizadas no início; não repetir aqui
           const playedTrumpA = !!room.game.playedTrumpAByPlayerId?.[p.id];
           const capturedOpp7 = !!room.game.capturedOppTrump7ByPlayerId?.[p.id];
           if (playedTrumpA && capturedOpp7) { delta += 1; reasons.push('played_trump_A_and_captured_opponent_trump_7'); }
