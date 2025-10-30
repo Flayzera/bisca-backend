@@ -100,7 +100,7 @@ io.on("connection", (socket) => {
   console.log(`[CONNECTION] Total de sockets conectados: ${totalSockets}`);
   
   // Create room
-  socket.on("createRoom", ({ capacity, nickname }: { capacity: number; nickname: string }) => {
+  socket.on("createRoom", ({ capacity, nickname, totalRounds }: { capacity: number; nickname: string; totalRounds?: number }) => {
     try {
       capacity = Math.max(2, Math.min(4, Math.floor(capacity || 2)));
       if (!nickname || typeof nickname !== 'string') {
@@ -109,18 +109,19 @@ io.on("connection", (socket) => {
       }
       
       const roomId = generateRoomId();
-      const meta: RoomMeta = { id: roomId, capacity, ownerId: socket.id, isGameStarted: false };
+      const rounds = Math.max(1, Math.min(20, Math.floor(totalRounds || 1)));
+      const meta: RoomMeta = { id: roomId, capacity, ownerId: socket.id, isGameStarted: false, totalRounds: rounds, currentRound: 1 };
       const game: GameState = createGame();
-      game.players.push({ id: socket.id, nickname: nickname.trim(), hand: [], score: 0, capturedCards: [] });
+      game.players.push({ id: socket.id, nickname: nickname.trim(), hand: [], score: 0, capturedCards: [], chips: 0 });
       
       const room: Room = { meta, game };
       rooms.set(roomId, room);
       socket.join(roomId);
       socketIdToRoomId.set(socket.id, roomId);
       
-      console.log(`[CREATE_ROOM] Sala ${roomId} criada por ${nickname} (${socket.id}), capacidade: ${capacity}`);
+      console.log(`[CREATE_ROOM] Sala ${roomId} criada por ${nickname} (${socket.id}), capacidade: ${capacity}, rodadas: ${rounds}`);
       
-      socket.emit('roomCreated', { roomId, capacity });
+      socket.emit('roomCreated', { roomId, capacity, totalRounds: rounds });
       socket.emit('playersUpdate', room.game.players);
       socket.emit('gameState', room.game);
       io.to(roomId).emit('playersUpdate', room.game.players);
@@ -171,7 +172,7 @@ io.on("connection", (socket) => {
         return;
       }
       
-      room.game.players.push({ id: socket.id, nickname: nickname.trim(), hand: [], score: 0, capturedCards: [] });
+      room.game.players.push({ id: socket.id, nickname: nickname.trim(), hand: [], score: 0, capturedCards: [], chips: 0 });
       socket.join(roomId);
       socketIdToRoomId.set(socket.id, roomId);
       
@@ -229,12 +230,100 @@ io.on("connection", (socket) => {
       const room = rooms.get(roomId);
       if (!room) return;
       
+      const beforeTableCount = room.game.table.length;
+      const beforeRoundNumber = room.game.roundNumber;
       room.game = playCard(room.game, socket.id, card);
       io.to(roomId).emit("gameState", room.game);
-      
+
+      // Se completou uma vaza (table esvaziou e roundNumber incrementou), emitir evento
+      const justCompletedTrick = beforeTableCount + 1 === room.meta.capacity && room.game.table.length === 0 && room.game.roundNumber === beforeRoundNumber + 1;
+      if (justCompletedTrick && room.game.lastTrickWinnerId && room.game.lastTrickCards) {
+        const winner = room.game.players.find(p => p.id === room.game.lastTrickWinnerId);
+        io.to(roomId).emit('trickWon', {
+          winnerId: room.game.lastTrickWinnerId,
+          winnerNickname: winner?.nickname || '—',
+          cards: room.game.lastTrickCards,
+          roundNumber: room.game.roundNumber - 1,
+        });
+      }
+
+      // Verificar fim da rodada (todos sem cartas)
       const playersWithCards = room.game.players.filter(p => p.hand.length > 0);
       if (playersWithCards.length === 0) {
-        io.to(roomId).emit("gameFinished");
+        // Calcular fichas desta rodada
+        const trumpSuit = room.game.trumpCard.slice(-1);
+        const trump2 = '2' + trumpSuit;
+        const trump7 = '7' + trumpSuit;
+        const trumpA = 'A' + trumpSuit;
+        const trumpK = 'K' + trumpSuit;
+
+        // Vencedor da última vaza jogou K de trunfo e nenhum adversário jogou A/7 de trunfo
+        const lastTrick = room.game.lastTrickCards || [];
+        const lastTrickWinnerId = room.game.lastTrickWinnerId;
+        const lastTrickWinnerPlayedKTrump = lastTrick.some(t => t.playerId === lastTrickWinnerId && t.card === trumpK);
+        const opponentsPlayedAor7Trump = lastTrick.some(t => t.card === trumpA || t.card === trump7);
+
+        // Determinar maior pontuação
+        const maxScore = Math.max(...room.game.players.map(p => p.score));
+
+        const chipsAwarded: { playerId: string; delta: number }[] = [];
+        room.game.players.forEach(p => {
+          let delta = 0;
+          const captured = new Set(p.capturedCards);
+          if (captured.has(trump2)) delta += 1; // tirou o 2 do trunfo
+          if (captured.has(trumpA) && captured.has(trump7)) delta += 1; // A e 7 do trunfo (conjuntos)
+          if (p.score === maxScore && maxScore > 0) delta += 1; // maior pontuação
+          if (p.id === lastTrickWinnerId && lastTrickWinnerPlayedKTrump && !opponentsPlayedAor7Trump) delta += 1; // rei no final
+          if (delta > 0) chipsAwarded.push({ playerId: p.id, delta });
+        });
+
+        // Aplicar fichas
+        room.game.players = room.game.players.map(p => {
+          const add = chipsAwarded.find(c => c.playerId === p.id)?.delta || 0;
+          const chips = (p.chips ?? 0) + add;
+          return { ...p, chips };
+        });
+
+        io.to(roomId).emit('roundFinished', {
+          scores: room.game.players.map(p => ({ id: p.id, nickname: p.nickname, score: p.score })),
+          chipsAwarded,
+          totalChips: room.game.players.map(p => ({ id: p.id, nickname: p.nickname, chips: p.chips ?? 0 })),
+          trumpCard: room.game.trumpCard,
+        });
+
+        // Avançar rodada do match
+        room.meta.currentRound = (room.meta.currentRound || 1) + 1;
+        const totalRounds = room.meta.totalRounds || 1;
+        const matchOver = (room.meta.currentRound || 1) > totalRounds;
+
+        if (matchOver) {
+          const maxChips = Math.max(...room.game.players.map(p => p.chips ?? 0));
+          const winners = room.game.players.filter(p => (p.chips ?? 0) === maxChips).map(p => ({ id: p.id, nickname: p.nickname, chips: p.chips ?? 0 }));
+          io.to(roomId).emit('matchFinished', {
+            winners,
+            standings: room.game.players.map(p => ({ id: p.id, nickname: p.nickname, chips: p.chips ?? 0 })),
+          });
+          // Reset estado do jogo para lobby
+          room.meta.isGameStarted = false;
+          room.game = createGame();
+          // manter jogadores com chips
+          const playersSnapshot = room.game.players; // createGame esvazia
+          // repovoar com lista de sockets presentes? manteremos pela lista anterior do room via socket map
+          // Como createGame limpou, re-adicionar apenas ids conectados atuais sem cartas
+          const connectedSocketIds = new Set(Array.from(io.sockets.sockets.keys()));
+          const previousPlayers = Array.from(connectedSocketIds).filter(id => room.game.players.findIndex(p => p.id === id) >= -1);
+          // Simplesmente emitir estado vazio; jogadores continuarão na sala, fichas preservadas em memória se iniciarmos novo jogo futuramente
+          io.to(roomId).emit('gameState', room.game);
+        } else {
+          // Iniciar próxima rodada automaticamente com mesmos jogadores e fichas preservadas
+          const preserved = room.game.players.map(p => ({ id: p.id, nickname: p.nickname, hand: [], score: 0, capturedCards: [], chips: p.chips ?? 0 }));
+          const nextGame = createGame();
+          nextGame.players = preserved as any;
+          room.game = startGame(nextGame);
+          room.meta.isGameStarted = true;
+          io.to(roomId).emit('gameState', room.game);
+          io.to(roomId).emit('gameStarted');
+        }
       }
     } catch (error) {
       // Silent fail

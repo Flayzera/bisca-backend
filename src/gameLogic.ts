@@ -39,6 +39,8 @@ export function createGame(): GameState {
     deck: [],
     roundNumber: 0,
     isGameStarted: false,
+    lastTrickWinnerId: undefined,
+    lastTrickCards: undefined,
   };
 }
 
@@ -61,7 +63,7 @@ export function startGame(game: GameState): GameState {
   }
   
   const newPlayers = game.players.map((player, index) => {
-    return { ...player, hand: hands[index], score: 0, capturedCards: [] };
+    return { ...player, hand: hands[index], score: 0, capturedCards: [], chips: player.chips ?? 0 };
   });
   
   const remainingDeck = deck.slice(totalToDeal);
@@ -275,7 +277,15 @@ export function playCard(game: GameState, playerId: string, card: string): GameS
       newTurn = absoluteWinnerPlayerIndex;
       newRoundNumber++;
       
-      return { ...game, players: updatedPlayers, table: [], turn: newTurn, roundNumber: newRoundNumber };
+      return { 
+        ...game, 
+        players: updatedPlayers, 
+        table: [], 
+        turn: newTurn, 
+        roundNumber: newRoundNumber,
+        lastTrickWinnerId: winner.id,
+        lastTrickCards: newTable,
+      };
     }
   } else {
     newTurn = (game.turn + 1) % game.players.length;
