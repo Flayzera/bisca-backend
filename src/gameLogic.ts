@@ -297,11 +297,17 @@ export function playCard(game: GameState, playerId: string, card: string): GameS
 
 // Separate function to resolve a completed trick
 export function resolveTrick(game: GameState): GameState {
-  if (game.table.length !== game.players.length) return game;
+  if (game.table.length !== game.players.length) {
+    console.log('[resolveTrick] Mesa não está completa:', game.table.length, 'de', game.players.length);
+    return game;
+  }
   
   const winnerIndex = determineRoundWinner(game);
   
-  if (winnerIndex === null) return game;
+  if (winnerIndex === null) {
+    console.log('[resolveTrick] Não foi possível determinar vencedor');
+    return game;
+  }
   
   // winnerIndex é relativo ao primeiro a jogar na vaza. 
   // No momento do término, game.turn aponta para o próximo jogador após o último que jogou.
@@ -312,6 +318,16 @@ export function resolveTrick(game: GameState): GameState {
   const startingPlayerIndex = (lastPlayerIndex - (playersCount - 1) + playersCount) % playersCount;
   const absoluteWinnerPlayerIndex = (startingPlayerIndex + winnerIndex) % playersCount;
   const winner = game.players[absoluteWinnerPlayerIndex];
+  
+  console.log('[resolveTrick] Cálculo do vencedor:', {
+    currentTurn: game.turn,
+    lastPlayerIndex,
+    startingPlayerIndex,
+    winnerIndexInTable: winnerIndex,
+    absoluteWinnerPlayerIndex,
+    winnerId: winner.id,
+    winnerNickname: winner.nickname
+  });
   
   console.log('[Trick Map]', {
     table: game.table.map(p => p.card),
@@ -363,6 +379,7 @@ export function resolveTrick(game: GameState): GameState {
     lastTrickWinnerId: winner.id,
     lastTrickCards: game.table,
     capturedOppTrump7ByPlayerId,
+    playedTrumpAByPlayerId: game.playedTrumpAByPlayerId, // Preserve playedTrumpAByPlayerId
   };
 }
 
