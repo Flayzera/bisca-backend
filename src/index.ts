@@ -275,31 +275,62 @@ io.on("connection", (socket) => {
       const beforeRoundNumber = room.game.roundNumber;
       room.game = playCard(room.game, socket.id, card);
       
-      // Check if this is the last card of the trick
-      const isLastCard = room.game.table.length === room.meta.capacity;
+      // Check if this is the last card of the trick (all players have played)
+      const isLastCard = room.game.table.length === room.game.players.length;
       
       if (isLastCard) {
+        console.log('[Last Card] Última carta jogada, mesa completa:', room.game.table.map(p => p.card));
         // Emit state with full table visible first
         io.to(roomId).emit("gameState", room.game);
         
         // Wait 2.5 seconds before resolving the trick
         setTimeout(() => {
           const currentRoom = rooms.get(roomId);
-          if (!currentRoom) return;
+          if (!currentRoom) {
+            console.log('[Last Card] Sala não encontrada ao resolver truque');
+            return;
+          }
+          
+          console.log('[Last Card] Resolvendo truque, estado antes:', {
+            tableLength: currentRoom.game.table.length,
+            playersLength: currentRoom.game.players.length,
+            roundNumber: currentRoom.game.roundNumber,
+            turn: currentRoom.game.turn
+          });
           
           const beforeRoundNumberResolve = currentRoom.game.roundNumber;
+          const beforeTableLength = currentRoom.game.table.length;
           currentRoom.game = resolveTrick(currentRoom.game);
+          
+          console.log('[Last Card] Truque resolvido, estado depois:', {
+            tableLength: currentRoom.game.table.length,
+            roundNumber: currentRoom.game.roundNumber,
+            turn: currentRoom.game.turn,
+            winnerId: currentRoom.game.lastTrickWinnerId
+          });
+          
           io.to(roomId).emit("gameState", currentRoom.game);
           
           // Emit trickWon event if trick was completed
-          const justCompletedTrick = currentRoom.game.table.length === 0 && currentRoom.game.roundNumber === beforeRoundNumberResolve + 1;
+          const justCompletedTrick = beforeTableLength === currentRoom.game.players.length && currentRoom.game.table.length === 0 && currentRoom.game.roundNumber === beforeRoundNumberResolve + 1;
           if (justCompletedTrick && currentRoom.game.lastTrickWinnerId && currentRoom.game.lastTrickCards) {
             const winner = currentRoom.game.players.find(p => p.id === currentRoom.game.lastTrickWinnerId);
+            console.log('[Last Card] Emitindo trickWon para:', winner?.nickname);
             io.to(roomId).emit('trickWon', {
               winnerId: currentRoom.game.lastTrickWinnerId,
               winnerNickname: winner?.nickname || '—',
               cards: currentRoom.game.lastTrickCards,
               roundNumber: currentRoom.game.roundNumber - 1,
+            });
+          } else {
+            console.log('[Last Card] Truque não completado corretamente:', {
+              justCompletedTrick,
+              hasWinnerId: !!currentRoom.game.lastTrickWinnerId,
+              hasLastTrickCards: !!currentRoom.game.lastTrickCards,
+              tableLength: currentRoom.game.table.length,
+              expectedTableLength: 0,
+              roundNumber: currentRoom.game.roundNumber,
+              expectedRoundNumber: beforeRoundNumberResolve + 1
             });
           }
           
