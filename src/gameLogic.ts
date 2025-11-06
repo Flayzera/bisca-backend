@@ -271,67 +271,16 @@ export function playCard(game: GameState, playerId: string, card: string): GameS
   let updatedPlayers = newPlayers;
   
   if (newTable.length === game.players.length) {
-    const winnerIndex = determineRoundWinner({ ...game, table: newTable, players: newPlayers });
-    
-    if (winnerIndex !== null) {
-      // winnerIndex é relativo ao primeiro a jogar na vaza. No momento do término,
-      // game.turn aponta para o último jogador que jogou. Portanto, o início da vaza é:
-      const lastPlayerIndex = game.turn;
-      const playersCount = game.players.length;
-      const startingPlayerIndex = (lastPlayerIndex - (newTable.length - 1) + playersCount) % playersCount;
-      const absoluteWinnerPlayerIndex = (startingPlayerIndex + winnerIndex) % playersCount;
-      const winner = game.players[absoluteWinnerPlayerIndex];
-      console.log('[Trick Map]', {
-        table: newTable.map(p => p.card),
-        winnerIndexInTable: winnerIndex,
-        startingPlayerIndex,
-        lastPlayerIndex,
-        absoluteWinnerPlayerIndex,
-        winnerId: winner.id,
-      });
-      // Capturar todas as cartas da mesa
-      const capturedCards = newTable.map(play => play.card);
-      const roundPoints = newTable.reduce((sum, play) => sum + getCardPoints(play.card), 0);
-      console.log('[Trick End]', {
-        tableCards: capturedCards,
-        points: roundPoints,
-        winner: winner.nickname,
-      });
-      
-      updatedPlayers = newPlayers.map(p => {
-        if (p.id === winner.id) {
-          return { 
-            ...p, 
-            score: p.score + roundPoints,
-            capturedCards: [...p.capturedCards, ...capturedCards]
-          };
-        }
-        return p;
-      });
-
-      // Se o 7 de trunfo foi jogado por um adversário nesta vaza e o vencedor capturou, marcar flag
-      const trump7 = '7' + trumpSuit;
-      const sevenPlay = newTable.find(t => t.card === trump7);
-      const capturedOppTrump7ByPlayerId = { ...(game.capturedOppTrump7ByPlayerId || {}) };
-      if (sevenPlay && sevenPlay.playerId !== winner.id) {
-        capturedOppTrump7ByPlayerId[winner.id] = true;
-      }
-      
-      newTurn = absoluteWinnerPlayerIndex;
-      newRoundNumber++;
-      
-      return { 
-        ...game, 
-        players: updatedPlayers, 
-        table: [], 
-        turn: newTurn, 
-        roundNumber: newRoundNumber,
-        lastTrickWinnerId: winner.id,
-        lastTrickCards: newTable,
-        playedTrumpAByPlayerId,
-        capturedOppTrump7ByPlayerId,
-      };
-    }
+    // Last card played - return state with full table visible (trick resolution will happen separately)
+    newTurn = (game.turn + 1) % game.players.length;
+    return {
+      ...game,
+      players: updatedPlayers,
+      table: newTable,
+      turn: newTurn,
+      roundNumber: newRoundNumber,
+      playedTrumpAByPlayerId,
+    };
   } else {
     newTurn = (game.turn + 1) % game.players.length;
   }
@@ -343,6 +292,77 @@ export function playCard(game: GameState, playerId: string, card: string): GameS
     turn: newTurn,
     roundNumber: newRoundNumber,
     playedTrumpAByPlayerId,
+  };
+}
+
+// Separate function to resolve a completed trick
+export function resolveTrick(game: GameState): GameState {
+  if (game.table.length !== game.players.length) return game;
+  
+  const winnerIndex = determineRoundWinner(game);
+  
+  if (winnerIndex === null) return game;
+  
+  // winnerIndex é relativo ao primeiro a jogar na vaza. 
+  // No momento do término, game.turn aponta para o próximo jogador após o último que jogou.
+  // O último jogador é (game.turn - 1 + playersCount) % playersCount
+  const lastPlayerIndex = (game.turn - 1 + game.players.length) % game.players.length;
+  const playersCount = game.players.length;
+  // O primeiro jogador da vaza é calculado retrocedendo (playersCount - 1) posições do último
+  const startingPlayerIndex = (lastPlayerIndex - (playersCount - 1) + playersCount) % playersCount;
+  const absoluteWinnerPlayerIndex = (startingPlayerIndex + winnerIndex) % playersCount;
+  const winner = game.players[absoluteWinnerPlayerIndex];
+  
+  console.log('[Trick Map]', {
+    table: game.table.map(p => p.card),
+    winnerIndexInTable: winnerIndex,
+    startingPlayerIndex,
+    lastPlayerIndex,
+    absoluteWinnerPlayerIndex,
+    winnerId: winner.id,
+  });
+  
+  // Capturar todas as cartas da mesa
+  const capturedCards = game.table.map(play => play.card);
+  const roundPoints = game.table.reduce((sum, play) => sum + getCardPoints(play.card), 0);
+  console.log('[Trick End]', {
+    tableCards: capturedCards,
+    points: roundPoints,
+    winner: winner.nickname,
+  });
+  
+  const updatedPlayers = game.players.map(p => {
+    if (p.id === winner.id) {
+      return { 
+        ...p, 
+        score: p.score + roundPoints,
+        capturedCards: [...p.capturedCards, ...capturedCards]
+      };
+    }
+    return p;
+  });
+
+  // Se o 7 de trunfo foi jogado por um adversário nesta vaza e o vencedor capturou, marcar flag
+  const trumpSuit = getTrumpSuit(game.trumpCard);
+  const trump7 = '7' + trumpSuit;
+  const sevenPlay = game.table.find(t => t.card === trump7);
+  const capturedOppTrump7ByPlayerId = { ...(game.capturedOppTrump7ByPlayerId || {}) };
+  if (sevenPlay && sevenPlay.playerId !== winner.id) {
+    capturedOppTrump7ByPlayerId[winner.id] = true;
+  }
+  
+  const newTurn = absoluteWinnerPlayerIndex;
+  const newRoundNumber = game.roundNumber + 1;
+  
+  return { 
+    ...game, 
+    players: updatedPlayers, 
+    table: [], 
+    turn: newTurn, 
+    roundNumber: newRoundNumber,
+    lastTrickWinnerId: winner.id,
+    lastTrickCards: game.table,
+    capturedOppTrump7ByPlayerId,
   };
 }
 
