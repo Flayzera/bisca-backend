@@ -1,7 +1,7 @@
 import express from "express";
 import { createServer } from "http";
 import { Server } from "socket.io";
-import { createGame, playCard, startGame } from "./gameLogic";
+import { createGame, playCard, startGame, resolveTrick } from "./gameLogic";
 import { GameState, Room, RoomMeta } from "./types";
 
 const app = express();
@@ -274,23 +274,58 @@ io.on("connection", (socket) => {
       const beforeTableCount = room.game.table.length;
       const beforeRoundNumber = room.game.roundNumber;
       room.game = playCard(room.game, socket.id, card);
-      io.to(roomId).emit("gameState", room.game);
-
-      // Se completou uma vaza (table esvaziou e roundNumber incrementou), emitir evento
-      const justCompletedTrick = beforeTableCount + 1 === room.meta.capacity && room.game.table.length === 0 && room.game.roundNumber === beforeRoundNumber + 1;
-      if (justCompletedTrick && room.game.lastTrickWinnerId && room.game.lastTrickCards) {
-        const winner = room.game.players.find(p => p.id === room.game.lastTrickWinnerId);
-        io.to(roomId).emit('trickWon', {
-          winnerId: room.game.lastTrickWinnerId,
-          winnerNickname: winner?.nickname || '—',
-          cards: room.game.lastTrickCards,
-          roundNumber: room.game.roundNumber - 1,
-        });
+      
+      // Check if this is the last card of the trick
+      const isLastCard = room.game.table.length === room.meta.capacity;
+      
+      if (isLastCard) {
+        // Emit state with full table visible first
+        io.to(roomId).emit("gameState", room.game);
+        
+        // Wait 2.5 seconds before resolving the trick
+        setTimeout(() => {
+          const currentRoom = rooms.get(roomId);
+          if (!currentRoom) return;
+          
+          const beforeRoundNumberResolve = currentRoom.game.roundNumber;
+          currentRoom.game = resolveTrick(currentRoom.game);
+          io.to(roomId).emit("gameState", currentRoom.game);
+          
+          // Emit trickWon event if trick was completed
+          const justCompletedTrick = currentRoom.game.table.length === 0 && currentRoom.game.roundNumber === beforeRoundNumberResolve + 1;
+          if (justCompletedTrick && currentRoom.game.lastTrickWinnerId && currentRoom.game.lastTrickCards) {
+            const winner = currentRoom.game.players.find(p => p.id === currentRoom.game.lastTrickWinnerId);
+            io.to(roomId).emit('trickWon', {
+              winnerId: currentRoom.game.lastTrickWinnerId,
+              winnerNickname: winner?.nickname || '—',
+              cards: currentRoom.game.lastTrickCards,
+              roundNumber: currentRoom.game.roundNumber - 1,
+            });
+          }
+          
+          // Check for end of game after trick resolution
+          checkGameEnd(roomId);
+        }, 2500);
+      } else {
+        // Not the last card, emit state immediately
+        io.to(roomId).emit("gameState", room.game);
       }
 
+      // Note: Game end check moved to checkGameEnd function
+    } catch (error) {
+      // Silent fail
+    }
+  });
+
+  // Helper function to check if game ended
+  function checkGameEnd(roomId: string) {
+    try {
+      const room = rooms.get(roomId);
+      if (!room) return;
+      
       // Verificar fim da partida (todos sem cartas)
       const playersWithCards = room.game.players.filter(p => p.hand.length > 0);
-    if (playersWithCards.length === 0) {
+      if (playersWithCards.length === 0) {
         // Calcular fichas desta partida (jogo) — finais: rei no final, maior pontuação, A do trunfo + pegar 7 adversário
         const trumpSuit = room.game.trumpCard.slice(-1);
         const trump2 = '2' + trumpSuit;
@@ -374,7 +409,7 @@ io.on("connection", (socket) => {
     } catch (error) {
       // Silent fail
     }
-  });
+  }
 
   // Disconnect
   socket.on("disconnect", (reason) => {
